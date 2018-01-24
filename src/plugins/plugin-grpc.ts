@@ -223,39 +223,41 @@ function patchServer(server, api) {
         initialAsyncResource.emitBefore();
         initialAsyncResource.emitAfter();
         const asyncResource = new AsyncResource('grpc-unary');
-        asyncResource.emitBefore();
-        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
-          if (!rootSpan) {
-            asyncResource.emitDestroy(); //FIXME: 
-            return serverMethod.call(that, call, callback);
-          }
-          if (api.enhancedDatabaseReportingEnabled()) {
-            shimmer.wrap(call, 'sendMetadata', sendMetadataWrapper(rootSpan));
-            rootSpan.addLabel('argument', JSON.stringify(call.request));
-          }
-          rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
-          // Here, we patch the callback so that the span is ended immediately
-          // beforehand.
-          var wrappedCb = function (err, result, trailer, flags) {
-            if (api.enhancedDatabaseReportingEnabled()) {
-              if (err) {
-                rootSpan.addLabel('error', err); 
-              } else {
-                rootSpan.addLabel('result', JSON.stringify(result));
-              }
-              if (trailer) {
-                rootSpan.addLabel('trailing_metadata',
-                  JSON.stringify(trailer.getMap()));
-              }
+        try {
+          asyncResource.emitBefore();
+          return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+            if (!rootSpan) {
+              asyncResource.emitDestroy(); //FIXME: 
+              return serverMethod.call(that, call, callback);
             }
-            rootSpan.endSpan();
-            asyncResource.emitDestroy(); //FIXME: 
-            return callback(err, result, trailer, flags);
-          };
-          return serverMethod.call(that, call, wrappedCb);
-        });
-        asyncResource.emitAfter();
-        return ret;
+            if (api.enhancedDatabaseReportingEnabled()) {
+              shimmer.wrap(call, 'sendMetadata', sendMetadataWrapper(rootSpan));
+              rootSpan.addLabel('argument', JSON.stringify(call.request));
+            }
+            rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
+            // Here, we patch the callback so that the span is ended immediately
+            // beforehand.
+            var wrappedCb = function (err, result, trailer, flags) {
+              if (api.enhancedDatabaseReportingEnabled()) {
+                if (err) {
+                  rootSpan.addLabel('error', err); 
+                } else {
+                  rootSpan.addLabel('result', JSON.stringify(result));
+                }
+                if (trailer) {
+                  rootSpan.addLabel('trailing_metadata',
+                    JSON.stringify(trailer.getMap()));
+                }
+              }
+              rootSpan.endSpan();
+              asyncResource.emitDestroy(); //FIXME: 
+              return callback(err, result, trailer, flags);
+            };
+            return serverMethod.call(that, call, wrappedCb);
+          });
+        } finally {
+          asyncResource.emitAfter();
+        }
       };
     });
   }
@@ -282,49 +284,51 @@ function patchServer(server, api) {
         initialAsyncResource.emitBefore();
         initialAsyncResource.emitAfter();
         const asyncResource = new AsyncResource('grpc-server-stream');
-        asyncResource.emitBefore();
-        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
-          if (!rootSpan) {
-            asyncResource.emitDestroy(); //FIXME: 
-            return serverMethod.call(that, stream);
-          }
-          if (api.enhancedDatabaseReportingEnabled()) {
-            shimmer.wrap(stream, 'sendMetadata', sendMetadataWrapper(rootSpan));
-            rootSpan.addLabel('argument', JSON.stringify(stream.request));
-          }
-          rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
-          var spanEnded = false;
-          var endSpan = function() {
-            if (!spanEnded) {
-              spanEnded = true;
-              rootSpan.endSpan();
+        try {
+          asyncResource.emitBefore();
+          return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+            if (!rootSpan) {
+              asyncResource.emitDestroy(); //FIXME: 
+              return serverMethod.call(that, stream);
             }
-          };
-          // Propagate context to stream event handlers.
-          api.wrapEmitter(stream);
-          // stream is a WriteableStream. Emitting a 'finish' or 'error' event
-          // suggests that no more data will be sent, so we end the span in
-          // these event handlers.
-          stream.on('finish', function () {
-            // End the span unless there is an error. (If there is, the span
-            // will be ended in the error event handler. This is to ensure that
-            // the 'error' label is applied.)
-            if (stream.status.code === 0) {
+            if (api.enhancedDatabaseReportingEnabled()) {
+              shimmer.wrap(stream, 'sendMetadata', sendMetadataWrapper(rootSpan));
+              rootSpan.addLabel('argument', JSON.stringify(stream.request));
+            }
+            rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
+            var spanEnded = false;
+            var endSpan = function() {
+              if (!spanEnded) {
+                spanEnded = true;
+                rootSpan.endSpan();
+              }
+            };
+            // Propagate context to stream event handlers.
+            api.wrapEmitter(stream);
+            // stream is a WriteableStream. Emitting a 'finish' or 'error' event
+            // suggests that no more data will be sent, so we end the span in
+            // these event handlers.
+            stream.on('finish', function () {
+              // End the span unless there is an error. (If there is, the span
+              // will be ended in the error event handler. This is to ensure that
+              // the 'error' label is applied.)
+              if (stream.status.code === 0) {
+                asyncResource.emitDestroy(); //FIXME: 
+                endSpan();
+              }
+            });
+            stream.on('error', function (err) {
+              if (api.enhancedDatabaseReportingEnabled()) {
+                rootSpan.addLabel('error', err);
+              }
               asyncResource.emitDestroy(); //FIXME: 
               endSpan();
-            }
+            });
+            return serverMethod.call(that, stream);
           });
-          stream.on('error', function (err) {
-            if (api.enhancedDatabaseReportingEnabled()) {
-              rootSpan.addLabel('error', err);
-            }
-            asyncResource.emitDestroy(); //FIXME: 
-            endSpan();
-          });
-          return serverMethod.call(that, stream);
-        });
-        asyncResource.emitAfter();
-        return ret;
+        } finally {
+          asyncResource.emitAfter();
+        }
       };
     });
   }
@@ -351,45 +355,47 @@ function patchServer(server, api) {
         initialAsyncResource.emitBefore();
         initialAsyncResource.emitAfter();
         const asyncResource = new AsyncResource('grpc-client-stream');
-        asyncResource.emitBefore();
-        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
-          if (!rootSpan) {
-            asyncResource.emitDestroy(); //FIXME: 
-            return serverMethod.call(that, stream, callback);
-          }
-          if (api.enhancedDatabaseReportingEnabled()) {
-            shimmer.wrap(stream, 'sendMetadata', sendMetadataWrapper(rootSpan));
-          }
-          rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
-          // Propagate context to stream event handlers.
-          // stream is a ReadableStream.
-          // Note that unlike server streams, the length of the span is not
-          // tied to the lifetime of the stream. It should measure the time for
-          // the server to send a response, not the time until all data has been
-          // received from the client.
-          api.wrapEmitter(stream);
-          // Here, we patch the callback so that the span is ended immediately
-          // beforehand.
-          var wrappedCb = function (err, result, trailer, flags) {
-            if (api.enhancedDatabaseReportingEnabled()) {
-              if (err) {
-                rootSpan.addLabel('error', err);
-              } else {
-                rootSpan.addLabel('result', JSON.stringify(result));
-              }
-              if (trailer) {
-                rootSpan.addLabel('trailing_metadata',
-                  JSON.stringify(trailer.getMap()));
-              }
+        try {
+          asyncResource.emitBefore();
+          return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+            if (!rootSpan) {
+              asyncResource.emitDestroy(); //FIXME: 
+              return serverMethod.call(that, stream, callback);
             }
-            asyncResource.emitDestroy(); //FIXME: 
-            rootSpan.endSpan();
-            return callback(err, result, trailer, flags);
-          };
-          return serverMethod.call(that, stream, wrappedCb);
-        });
-        asyncResource.emitAfter();
-        return ret;
+            if (api.enhancedDatabaseReportingEnabled()) {
+              shimmer.wrap(stream, 'sendMetadata', sendMetadataWrapper(rootSpan));
+            }
+            rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
+            // Propagate context to stream event handlers.
+            // stream is a ReadableStream.
+            // Note that unlike server streams, the length of the span is not
+            // tied to the lifetime of the stream. It should measure the time for
+            // the server to send a response, not the time until all data has been
+            // received from the client.
+            api.wrapEmitter(stream);
+            // Here, we patch the callback so that the span is ended immediately
+            // beforehand.
+            var wrappedCb = function (err, result, trailer, flags) {
+              if (api.enhancedDatabaseReportingEnabled()) {
+                if (err) {
+                  rootSpan.addLabel('error', err);
+                } else {
+                  rootSpan.addLabel('result', JSON.stringify(result));
+                }
+                if (trailer) {
+                  rootSpan.addLabel('trailing_metadata',
+                    JSON.stringify(trailer.getMap()));
+                }
+              }
+              asyncResource.emitDestroy(); //FIXME: 
+              rootSpan.endSpan();
+              return callback(err, result, trailer, flags);
+            };
+            return serverMethod.call(that, stream, wrappedCb);
+          });
+        } finally {
+          asyncResource.emitAfter();
+        }
       };
     });
   }
@@ -416,49 +422,51 @@ function patchServer(server, api) {
         initialAsyncResource.emitBefore();
         initialAsyncResource.emitAfter();
         const asyncResource = new AsyncResource('grpc-client-stream');
-        asyncResource.emitBefore();
-        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
-          if (!rootSpan) {
-            return serverMethod.call(that, stream);
-          }
-          if (api.enhancedDatabaseReportingEnabled()) {
-            shimmer.wrap(stream, 'sendMetadata', sendMetadataWrapper(rootSpan));
-          }
-          rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
-          var spanEnded = false;
-          var endSpan = function() {
-            if (!spanEnded) {
-              spanEnded = true;
-              asyncResource.emitDestroy(); //FIXME: 
-              rootSpan.endSpan();
+        try {
+          asyncResource.emitBefore();
+          return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+            if (!rootSpan) {
+              return serverMethod.call(that, stream);
             }
-          };
-          // Propagate context in stream event handlers.
-          api.wrapEmitter(stream);
-          // stream is a Duplex. Emitting a 'finish' or 'error' event
-          // suggests that no more data will be sent, so we end the span in
-          // these event handlers.
-          // Similar to client streams, the trace span should measure the time
-          // until the server has finished sending data back to the client, not
-          // the time that all data has been received from the client.
-          stream.on('finish', function () {
-            // End the span unless there is an error.
-            if (stream.status.code === 0) {
+            if (api.enhancedDatabaseReportingEnabled()) {
+              shimmer.wrap(stream, 'sendMetadata', sendMetadataWrapper(rootSpan));
+            }
+            rootSpan.addLabel(api.labels.HTTP_METHOD_LABEL_KEY, 'POST');
+            var spanEnded = false;
+            var endSpan = function() {
+              if (!spanEnded) {
+                spanEnded = true;
+                asyncResource.emitDestroy(); //FIXME: 
+                rootSpan.endSpan();
+              }
+            };
+            // Propagate context in stream event handlers.
+            api.wrapEmitter(stream);
+            // stream is a Duplex. Emitting a 'finish' or 'error' event
+            // suggests that no more data will be sent, so we end the span in
+            // these event handlers.
+            // Similar to client streams, the trace span should measure the time
+            // until the server has finished sending data back to the client, not
+            // the time that all data has been received from the client.
+            stream.on('finish', function () {
+              // End the span unless there is an error.
+              if (stream.status.code === 0) {
+                asyncResource.emitDestroy(); //FIXME: 
+                endSpan();
+              }
+            });
+            stream.on('error', function (err) {
+              if (!spanEnded && api.enhancedDatabaseReportingEnabled()) {
+                rootSpan.addLabel('error', err);
+              }
               asyncResource.emitDestroy(); //FIXME: 
               endSpan();
-            }
+            });
+            return serverMethod.call(that, stream);
           });
-          stream.on('error', function (err) {
-            if (!spanEnded && api.enhancedDatabaseReportingEnabled()) {
-              rootSpan.addLabel('error', err);
-            }
-            asyncResource.emitDestroy(); //FIXME: 
-            endSpan();
-          });
-          return serverMethod.call(that, stream);
-        });
-        asyncResource.emitAfter();
-        return ret;
+        } finally {
+          asyncResource.emitAfter();
+        }
       };
     });
   }
