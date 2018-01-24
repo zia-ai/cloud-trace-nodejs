@@ -16,8 +16,11 @@
 
 'use strict';
 
+var { AsyncResource } = require('async_hooks');
 var shimmer = require('shimmer');
 var findIndex = require('lodash.findindex');
+
+const initialAsyncResource = new AsyncResource('grpc-initial');
 
 var SKIP_FRAMES = 3;
 
@@ -217,8 +220,13 @@ function patchServer(server, api) {
           traceContext: call.metadata.getMap()[traceContextHeaderName],
           skipFrames: SKIP_FRAMES
         };
-        return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+        initialAsyncResource.emitBefore();
+        initialAsyncResource.emitAfter();
+        const asyncResource = new AsyncResource('grpc-unary');
+        asyncResource.emitBefore();
+        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
           if (!rootSpan) {
+            asyncResource.emitDestroy(); //FIXME: 
             return serverMethod.call(that, call, callback);
           }
           if (api.enhancedDatabaseReportingEnabled()) {
@@ -241,10 +249,13 @@ function patchServer(server, api) {
               }
             }
             rootSpan.endSpan();
+            asyncResource.emitDestroy(); //FIXME: 
             return callback(err, result, trailer, flags);
           };
           return serverMethod.call(that, call, wrappedCb);
         });
+        asyncResource.emitAfter();
+        return ret;
       };
     });
   }
@@ -268,8 +279,13 @@ function patchServer(server, api) {
           traceContext: stream.metadata.getMap()[traceContextHeaderName],
           skipFrames: SKIP_FRAMES
         };
-        return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+        initialAsyncResource.emitBefore();
+        initialAsyncResource.emitAfter();
+        const asyncResource = new AsyncResource('grpc-server-stream');
+        asyncResource.emitBefore();
+        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
           if (!rootSpan) {
+            asyncResource.emitDestroy(); //FIXME: 
             return serverMethod.call(that, stream);
           }
           if (api.enhancedDatabaseReportingEnabled()) {
@@ -294,6 +310,7 @@ function patchServer(server, api) {
             // will be ended in the error event handler. This is to ensure that
             // the 'error' label is applied.)
             if (stream.status.code === 0) {
+              asyncResource.emitDestroy(); //FIXME: 
               endSpan();
             }
           });
@@ -301,10 +318,13 @@ function patchServer(server, api) {
             if (api.enhancedDatabaseReportingEnabled()) {
               rootSpan.addLabel('error', err);
             }
+            asyncResource.emitDestroy(); //FIXME: 
             endSpan();
           });
           return serverMethod.call(that, stream);
         });
+        asyncResource.emitAfter();
+        return ret;
       };
     });
   }
@@ -328,8 +348,13 @@ function patchServer(server, api) {
           traceContext: stream.metadata.getMap()[traceContextHeaderName],
           skipFrames: SKIP_FRAMES
         };
-        return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+        initialAsyncResource.emitBefore();
+        initialAsyncResource.emitAfter();
+        const asyncResource = new AsyncResource('grpc-client-stream');
+        asyncResource.emitBefore();
+        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
           if (!rootSpan) {
+            asyncResource.emitDestroy(); //FIXME: 
             return serverMethod.call(that, stream, callback);
           }
           if (api.enhancedDatabaseReportingEnabled()) {
@@ -357,11 +382,14 @@ function patchServer(server, api) {
                   JSON.stringify(trailer.getMap()));
               }
             }
+            asyncResource.emitDestroy(); //FIXME: 
             rootSpan.endSpan();
             return callback(err, result, trailer, flags);
           };
           return serverMethod.call(that, stream, wrappedCb);
         });
+        asyncResource.emitAfter();
+        return ret;
       };
     });
   }
@@ -385,7 +413,11 @@ function patchServer(server, api) {
           traceContext: stream.metadata.getMap()[traceContextHeaderName],
           skipFrames: SKIP_FRAMES
         };
-        return api.runInRootSpan(rootSpanOptions, function(rootSpan) {
+        initialAsyncResource.emitBefore();
+        initialAsyncResource.emitAfter();
+        const asyncResource = new AsyncResource('grpc-client-stream');
+        asyncResource.emitBefore();
+        const ret = api.runInRootSpan(rootSpanOptions, function(rootSpan) {
           if (!rootSpan) {
             return serverMethod.call(that, stream);
           }
@@ -397,6 +429,7 @@ function patchServer(server, api) {
           var endSpan = function() {
             if (!spanEnded) {
               spanEnded = true;
+              asyncResource.emitDestroy(); //FIXME: 
               rootSpan.endSpan();
             }
           };
@@ -411,6 +444,7 @@ function patchServer(server, api) {
           stream.on('finish', function () {
             // End the span unless there is an error.
             if (stream.status.code === 0) {
+              asyncResource.emitDestroy(); //FIXME: 
               endSpan();
             }
           });
@@ -418,10 +452,13 @@ function patchServer(server, api) {
             if (!spanEnded && api.enhancedDatabaseReportingEnabled()) {
               rootSpan.addLabel('error', err);
             }
+            asyncResource.emitDestroy(); //FIXME: 
             endSpan();
           });
           return serverMethod.call(that, stream);
         });
+        asyncResource.emitAfter();
+        return ret;
       };
     });
   }
